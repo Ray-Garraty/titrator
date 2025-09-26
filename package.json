@@ -1,0 +1,40 @@
+{
+  "name": "titrationserver",
+  "version": "1.0.0",
+  "description": "backend for titrator",
+  "keywords": [
+    "titrator",
+    "nodejs",
+    "typescript"
+  ],
+  "license": "ISC",
+  "author": "Ray-Garraty",
+  "type": "module",
+  "main": "index.ts",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "@eslint/compat": "^1.4.0",
+    "@eslint/js": "^9.36.0",
+    "@stylistic/eslint-plugin": "^3.1.0",
+    "@types/node": "^24.5.2",
+    "@types/readline-sync": "^1.4.8",
+    "eslint": "^9.36.0",
+    "eslint-config-airbnb-extended": "^2.3.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-import-resolver-typescript": "^4.4.4",
+    "eslint-plugin-import-x": "^4.16.1",
+    "eslint-plugin-n": "^17.23.1",
+    "eslint-plugin-prettier": "^5.5.4",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.44.1"
+  },
+  "dependencies": {
+    "ads1115": "^1.2.0",
+    "chalk": "^5.6.2",
+    "i2c-bus": "^5.2.3",
+    "readline-sync": "^1.4.10"
+  }
+}

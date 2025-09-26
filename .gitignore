@@ -1,0 +1,43 @@
+# Node.js dependencies
+node_modules/
+
+# TypeScript compiled output
+dist/
+build/
+lib/
+*.js
+*.d.ts
+*.map
+!src/**/*.js
+!src/**/*.d.ts
+!src/**/*.map
+
+# Editor and IDE specific files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.*.local
+
+# Log files
+*.log
+logs/
+
+# Test coverage reports
+coverage/
+
+# npm package manager files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Other temporary files
+tmp/
+*.bak
+*.swp
