@@ -135,7 +135,7 @@ class MotorController {
   public async emptyBurette(opts: MotorOptions) {
     const { dir, step, enable, sensorLower, sensorUpper } =
       this.createGpioMotor(opts);
-    console.log("\nРежим опустошения бюретки");
+    console.log("\nОпустошение бюретки");
     await this.stepUntilSensor(
       opts.stepPin,
       enable,
@@ -149,7 +149,7 @@ class MotorController {
   public async fillBurette(opts: MotorOptions) {
     const { dir, step, enable, sensorLower, sensorUpper } =
       this.createGpioMotor(opts);
-    console.log("\nРежим заполнения бюретки");
+    console.log("\nЗаполнение бюретки");
     await this.stepUntilSensor(
       opts.stepPin,
       enable,
@@ -161,15 +161,16 @@ class MotorController {
   }
 
   public async rinseBurette(opts: MotorOptions) {
-    console.log("\nРежим промывки бюретки");
+    console.log("\nПромывка бюретки");
     await this.emptyBurette(opts);
     await this.fillBurette(opts);
   }
 
-  public async doseVolume(opts: MotorOptions, steps: number) {
+  public async doseVolume(opts: MotorOptions, volumeMl: number) {
+    const steps = volumeMl / 0.0002965;
     const { dir, step, enable, sensorLower, sensorUpper } =
       this.createGpioMotor(opts);
-    console.log("\nРежим дозирования заданного объёма");
+    console.log("\nДозирование заданного объёма");
     if (sensorUpper.digitalRead() === 1) {
       console.log(
         "Верхний датчик бюретки (GPIO",
@@ -186,14 +187,6 @@ class MotorController {
       opts.freq / 2,
       true,
     );
-    await this.stepUntilSensor(
-      opts.stepPin,
-      enable,
-      dir,
-      opts.freq,
-      false,
-      sensorLower,
-    );
   }
 
   public async titrationMode(
@@ -202,7 +195,7 @@ class MotorController {
   ) {
     const { dir, step, enable, sensorLower, sensorUpper } =
       this.createGpioMotor(opts);
-    console.log("\nРежим титрования с переменной скоростью");
+    console.log("\nТитрование с переменной скоростью");
 
     let continueTitration = true;
     let doseSteps = 100;
@@ -238,7 +231,7 @@ class MotorController {
   }
 
   // === Алгоритмы для клапана ===
-  public async setValveBottleToBurette(opts: MotorOptions) {
+  public async setValveBuretteToVessel(opts: MotorOptions) {
     const {
       dir,
       step,
@@ -265,7 +258,7 @@ class MotorController {
     );
   }
 
-  public async setValveBuretteToVessel(opts: MotorOptions) {
+  public async setValveBottleToBurette(opts: MotorOptions) {
     const {
       dir,
       step,
@@ -315,7 +308,7 @@ async function delay(ms: number) {
     dirPin: 24,
     stepPin: 18,
     enablePin: 4,
-    freq: 100,
+    freq: 75,
     clockwise: false,
     sensor1Pin: 8,
     sensor2Pin: 25,
@@ -336,10 +329,12 @@ async function delay(ms: number) {
     await delay(1000);
     await motorController.setValveBuretteToVessel(valveOpts);
     await delay(1000);
-    await motorController.doseVolume(buretteOpts, 15000);
+    await motorController.doseVolume(buretteOpts, 10);
+
     // await motorController.rinseBurette(buretteOpts);
     // const fakeReadPH = async () => 6.5 + Math.random();
     // await motorController.titrationMode(buretteOpts, fakeReadPH);
+    
     console.log("Все операции завершены");
   } catch (err) {
     console.error("Ошибка:", err);

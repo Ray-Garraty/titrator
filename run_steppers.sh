@@ -9,5 +9,5 @@ then
 fi
 
 # Запускаем твой Node-скрипт
-echo "Запуск stepper3.ts..."
-sudo node src/hardware/stepper3.ts
+echo "Запуск steppers.ts..."
+sudo node src/hardware/steppers.ts
