@@ -1,254 +1,240 @@
-/* eslint-disable no-await-in-loop */
 import pigpioPkg from "pigpio";
 
 const {
   Gpio,
   waveClear,
   waveAddGeneric,
+  waveChain,
   waveCreate,
   waveTxBusy,
-  waveDelete,
   waveTxStop,
-  waveTxSend,
 } = pigpioPkg;
 
-function createGpioMotor(opts) {
-  const dir = new Gpio(opts.dirPin, { mode: Gpio.OUTPUT });
-  const step = new Gpio(opts.stepPin, { mode: Gpio.OUTPUT });
-  const enable = new Gpio(opts.enablePin, { mode: Gpio.OUTPUT });
+const doseFreq = 500;
+const rinseFreq = 750;
+const valveFreq = 25;
+const waveBatchSize = 5000;
+const delayMs = 1000;
+const vol = 10;
 
-  const sensorLower = new Gpio(opts.sensor1Pin, {
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const createDriveGpiosSet = (
+  dirPinNum,
+  stepPinNum,
+  enablePinNum,
+  sensorAtStartPinNum,
+  sensorAtEndPinNum,
+) => {
+  const dirPinObj = new Gpio(dirPinNum, { mode: Gpio.OUTPUT });
+  const stepPinObj = new Gpio(stepPinNum, { mode: Gpio.OUTPUT });
+  const enablePinObj = new Gpio(enablePinNum, { mode: Gpio.OUTPUT });
+  const sensorAtStartObj = new Gpio(sensorAtStartPinNum, {
     mode: Gpio.INPUT,
     pullUpDown: Gpio.PUD_DOWN,
   });
-  const sensorUpper = new Gpio(opts.sensor2Pin, {
+  const sensorAtEndObj = new Gpio(sensorAtEndPinNum, {
     mode: Gpio.INPUT,
     pullUpDown: Gpio.PUD_DOWN,
   });
 
-  return { dir, step, enable, sensorLower, sensorUpper };
-}
-
-async function stepByCount(stepPin, enable, dir, steps, freq, clockwise) {
-  const micros = Math.floor(1_000_000 / (4 * freq));
-  let done = 0;
-  enable.digitalWrite(1);
-  dir.digitalWrite(clockwise ? 1 : 0);
-
-  while (done < steps) {
-    const batch = Math.min(2000, steps - done);
-    const pulses = [];
-    for (let i = 0; i < batch; i += 1) {
-      pulses.push({ gpioOn: stepPin, gpioOff: 0, usDelay: micros });
-      pulses.push({ gpioOn: 0, gpioOff: stepPin, usDelay: micros });
-    }
-
-    waveClear();
-    waveAddGeneric(pulses);
-    const wid = waveCreate();
-    if (wid >= 0) {
-      waveTxSend(wid, pigpioPkg.WAVE_MODE_ONE_SHOT);
-      while (waveTxBusy()) {
-        await new Promise((r) => setTimeout(r, 1));
-      }
-      waveDelete(wid);
-    }
-
-    done += batch;
-  }
-
-  enable.digitalWrite(0);
-}
-
-async function stepUntilSensor(stepPin, enable, dir, freq, clockwise, sensor) {
-  const micros = Math.floor(1_000_000 / (2 * freq));
-  enable.digitalWrite(1);
-  dir.digitalWrite(clockwise ? 1 : 0);
-
-  let triggered = false;
-  while (!triggered) {
-    const pulses = [
-      { gpioOn: stepPin, gpioOff: 0, usDelay: micros },
-      { gpioOn: 0, gpioOff: stepPin, usDelay: micros },
-    ];
-    waveClear();
-    waveAddGeneric(pulses);
-    const wid = waveCreate();
-    if (wid >= 0) {
-      waveTxSend(wid, pigpioPkg.WAVE_MODE_ONE_SHOT);
-      while (waveTxBusy()) {
-        if (sensor.digitalRead() === 1) {
-          triggered = true;
-          console.log(`Концевой датчик (GPIO ${sensor.gpio}) сработал`);
-          waveTxStop();
-          break;
-        }
-        await new Promise((r) => setTimeout(r, 1));
-      }
-      waveDelete(wid);
-    }
-  }
-  enable.digitalWrite(0);
-}
-
-async function emptyBurette(opts) {
-  const { dir, step, enable, sensorUpper } = createGpioMotor(opts);
-  console.log("\nОпустошение бюретки");
-  await stepUntilSensor(
-    opts.stepPin,
-    enable,
-    dir,
-    opts.freq,
-    true,
-    sensorUpper,
-  );
-}
-
-async function fillBurette(opts) {
-  const { dir, step, enable, sensorLower } = createGpioMotor(opts);
-  console.log("\nЗаполнение бюретки");
-  await stepUntilSensor(
-    opts.stepPin,
-    enable,
-    dir,
-    opts.freq,
-    false,
-    sensorLower,
-  );
-}
-
-async function rinseBurette(opts) {
-  console.log("\nПромывка бюретки");
-  await emptyBurette(opts);
-  await fillBurette(opts);
-}
-
-async function doseVolume(opts, volumeMl) {
-  const steps = volumeMl / 0.0002965;
-  const { dir, step, enable, sensorUpper } = createGpioMotor(opts);
-  console.log("\nДозирование заданного объёма");
-  if (sensorUpper.digitalRead() === 1) {
-    console.log(
-      `Верхний датчик бюретки (GPIO ${sensorUpper.gpio}) уже активен, бюретка пустая.`,
-    );
-    return;
-  }
-  await stepByCount(opts.stepPin, enable, dir, steps, opts.freq / 2, true);
-}
-
-async function titrationMode(opts, readPH) {
-  const { dir, step, enable, sensorLower } = createGpioMotor(opts);
-  console.log("\nТитрование с переменной скоростью");
-  let continueTitration = true;
-  let doseSteps = 100;
-
-  while (continueTitration) {
-    await stepByCount(
-      opts.stepPin,
-      enable,
-      dir,
-      doseSteps,
-      opts.freq / 2,
-      true,
-    );
-    await new Promise((r) => setTimeout(r, 2000));
-    const ph = await readPH();
-    console.log("pH =", ph);
-    if (ph >= 7) continueTitration = false;
-    else doseSteps = Math.min(doseSteps + 50, 1000);
-  }
-
-  await stepUntilSensor(
-    opts.stepPin,
-    enable,
-    dir,
-    opts.freq,
-    false,
-    sensorLower,
-  );
-}
-
-async function setValveBuretteToVessel(opts) {
-  const { dir, enable, sensorLower: sensorBottle } = createGpioMotor(opts);
-  console.log("\nКлапан: положение Бутыль -> Бюретка");
-  if (sensorBottle.digitalRead() === 1) {
-    console.log(
-      `Концевой датчик клапана (GPIO ${sensorBottle.gpio}) уже активен`,
-    );
-    return;
-  }
-  await stepUntilSensor(
-    opts.stepPin,
-    enable,
-    dir,
-    opts.freq,
-    false,
-    sensorBottle,
-  );
-}
-
-async function setValveBottleToBurette(opts) {
-  const { dir, enable, sensorUpper: sensorVessel } = createGpioMotor(opts);
-  console.log("\nКлапан: положение Бюретка -> Сосуд");
-  if (sensorVessel.digitalRead() === 1) {
-    console.log(
-      `Концевой датчик клапана (GPIO ${sensorVessel.gpio}) уже активен`,
-    );
-    return;
-  }
-  await stepUntilSensor(
-    opts.stepPin,
-    enable,
-    dir,
-    opts.freq,
-    true,
-    sensorVessel,
-  );
-}
-
-async function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-(async () => {
-  const buretteOpts = {
-    dirPin: 13,
-    stepPin: 19,
-    enablePin: 12,
-    freq: 1000,
-    clockwise: true,
-    sensor1Pin: 16,
-    sensor2Pin: 7,
+  return {
+    dirPinObj,
+    stepPinObj,
+    enablePinObj,
+    sensorAtStartObj,
+    sensorAtEndObj,
   };
+};
 
-  const valveOpts = {
-    dirPin: 24,
-    stepPin: 18,
-    enablePin: 4,
-    freq: 75,
-    clockwise: false,
-    sensor1Pin: 8,
-    sensor2Pin: 25,
-  };
+const buretteDrivePinsNums = [13, 19, 12, 16, 7];
+const valveDrivePinsNums = [24, 18, 4, 8, 25];
 
-  try {
-    await setValveBottleToBurette(valveOpts);
-    await delay(1000);
-    await fillBurette(buretteOpts);
-    await delay(1000);
-    await setValveBuretteToVessel(valveOpts);
-    await delay(1000);
-    await emptyBurette(buretteOpts);
-    await delay(1000);
-    await setValveBottleToBurette(valveOpts);
-    await delay(1000);
-    await fillBurette(buretteOpts);
-    await delay(1000);
-    await setValveBuretteToVessel(valveOpts);
-    await delay(1000);
-    await doseVolume(buretteOpts, 10);
-    console.log("Все операции завершены");
-  } catch (err) {
-    console.error("Ошибка:", err);
+const moveByStepsCount = async (
+  stepPinObj,
+  enablePinObj,
+  dirPinObj,
+  stepsCount,
+  freq,
+  isClockwise,
+  sensorAtEndObj,
+) => {
+  if (sensorAtEndObj.digitalRead() === 1) {
+    console.log(
+      `Верхний датчик бюретки (GPIO ${sensorAtEndObj.gpio}) уже активен, бюретка пустая.`,
+    );
+    return;
   }
-})();
+
+  // console.log({ stepsCount });
+  const intervalMicrosecs = Math.floor(1_000_000 / (4 * freq));
+  enablePinObj.digitalWrite(1);
+  dirPinObj.digitalWrite(isClockwise ? 1 : 0);
+
+  const fillPulsesArray = (v, i) =>
+    i % 2 === 0
+      ? { gpioOn: 0, gpioOff: stepPinObj.gpio, usDelay: intervalMicrosecs }
+      : { gpioOn: stepPinObj.gpio, gpioOff: 0, usDelay: intervalMicrosecs };
+
+  const repeatsCount = Math.floor(stepsCount / waveBatchSize);
+  // console.log({ repeatsCount });
+  const leftoverCount = stepsCount % waveBatchSize;
+
+  waveClear();
+  const pulsesMainBatch = Array.from(
+    { length: waveBatchSize },
+    fillPulsesArray,
+  );
+  const mainBatchPulsesCount = waveAddGeneric(pulsesMainBatch);
+  // console.log({ mainBatchPulsesCount });
+  const mainWaveId = waveCreate();
+
+  const chain = [255, 0, mainWaveId, 255, 1, repeatsCount, 0];
+
+  if (leftoverCount !== 0) {
+    const pulsesLeftover = Array.from(
+      { length: leftoverCount },
+      fillPulsesArray,
+    );
+    const leftoverPulsesCount = waveAddGeneric(pulsesLeftover);
+    // console.log({ leftoverPulsesCount });
+    const leftoverWaveId = waveCreate();
+    const expandedChain = [...chain, 255, 0, leftoverWaveId];
+    waveChain(expandedChain);
+  } else {
+    waveChain(chain);
+  }
+
+  while (waveTxBusy()) {
+    if (sensorAtEndObj.digitalRead() === 1) {
+      console.log(`Сработал датчик GPIO ${sensorAtEndObj.gpio}`);
+      waveTxStop();
+      break;
+    }
+  }
+  enablePinObj.digitalWrite(0);
+};
+
+const moveToSensor = async (
+  stepPinObj,
+  enablePinObj,
+  dirPinObj,
+  freq,
+  isClockwise,
+  limitSensorObj,
+) => {
+  const intervalMicrosecs = Math.floor(1_000_000 / (4 * freq));
+  enablePinObj.digitalWrite(1);
+  dirPinObj.digitalWrite(isClockwise ? 1 : 0);
+
+  const fillPulsesArray = (v, i) =>
+    i % 2 === 0
+      ? { gpioOn: 0, gpioOff: stepPinObj.gpio, usDelay: intervalMicrosecs }
+      : { gpioOn: stepPinObj.gpio, gpioOff: 0, usDelay: intervalMicrosecs };
+
+  waveClear();
+  const pulses = Array.from({ length: waveBatchSize }, fillPulsesArray);
+  waveAddGeneric(pulses);
+  const waveId = waveCreate();
+
+  const chain = [255, 0, waveId, 255, 3];
+  waveChain(chain);
+
+  while (waveTxBusy()) {
+    if (limitSensorObj.digitalRead() === 1) {
+      console.log(`Сработал датчик GPIO ${limitSensorObj.gpio}`);
+      waveTxStop();
+      break;
+    }
+  }
+  enablePinObj.digitalWrite(0);
+};
+
+const emptyBurette = async () => {
+  const { stepPinObj, enablePinObj, dirPinObj, sensorAtEndObj } =
+    createDriveGpiosSet(...buretteDrivePinsNums);
+  console.log("\nОпустошаю бюретку...");
+  await moveToSensor(
+    stepPinObj,
+    enablePinObj,
+    dirPinObj,
+    rinseFreq,
+    true,
+    sensorAtEndObj,
+  );
+};
+
+const fillBurette = async () => {
+  const { stepPinObj, enablePinObj, dirPinObj, sensorAtStartObj } =
+    createDriveGpiosSet(...buretteDrivePinsNums);
+  console.log("\nЗаполняю бюретку...");
+  await moveToSensor(
+    stepPinObj,
+    enablePinObj,
+    dirPinObj,
+    rinseFreq,
+    false,
+    sensorAtStartObj,
+  );
+};
+
+const doseVolume = async (volumeMl) => {
+  const stepsCount = Math.round(volumeMl / 0.0001475);
+  const { stepPinObj, enablePinObj, dirPinObj, sensorAtEndObj } =
+    createDriveGpiosSet(...buretteDrivePinsNums);
+  console.log(`\nДозирую ${volumeMl} мл...`);
+  await moveByStepsCount(
+    stepPinObj,
+    enablePinObj,
+    dirPinObj,
+    stepsCount,
+    doseFreq,
+    true,
+    sensorAtEndObj,
+  );
+};
+
+const setValveToBottleBurette = async () => {
+  const { stepPinObj, enablePinObj, dirPinObj, sensorAtEndObj } =
+    createDriveGpiosSet(...valveDrivePinsNums);
+  console.log("\nПеревожу клапан в положение Бутыль -> Бюретка");
+  if (sensorAtEndObj.digitalRead() === 1) {
+    console.log(`Датчик (GPIO ${sensorAtEndObj.gpio}) уже активен.`);
+    return;
+  }
+  await moveToSensor(
+    stepPinObj,
+    enablePinObj,
+    dirPinObj,
+    valveFreq,
+    true,
+    sensorAtEndObj,
+  );
+};
+
+const setValveToBuretteVessel = async () => {
+  const { stepPinObj, enablePinObj, dirPinObj, sensorAtStartObj } =
+    createDriveGpiosSet(...valveDrivePinsNums);
+  console.log("\nПеревожу клапан в положение Бюретка -> Титровальный сосуд...");
+  if (sensorAtStartObj.digitalRead() === 1) {
+    console.log(`Датчик (GPIO ${sensorAtStartObj.gpio}) уже активен.`);
+    return;
+  }
+  await moveToSensor(
+    stepPinObj,
+    enablePinObj,
+    dirPinObj,
+    valveFreq,
+    false,
+    sensorAtStartObj,
+  );
+};
+
+await setValveToBottleBurette();
+await delay(1000);
+await fillBurette();
+await delay(1000);
+await setValveToBuretteVessel();
+console.warn("Get ready!");
+await delay(2000);
+await doseVolume(vol);
