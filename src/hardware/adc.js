@@ -17,11 +17,9 @@ let mV = 0;
 let temperature = 0;
 
 const measureMv = async () => {
-  const rawMvReading: number = await adsModule.measure(`${mvChannelNum}+GND`);
+  const rawMvReading = await adsModule.measure(`${mvChannelNum}+GND`);
   mV = Math.round(rawMvReading * 0.1253 - 1507.25);
-  const rawTempReading: number = await adsModule.measure(
-    `${tempChannelNum}+GND`,
-  );
+  const rawTempReading = await adsModule.measure(`${tempChannelNum}+GND`);
 
   const resistance = Math.round(-0.675 * rawTempReading + 8797);
 
