@@ -11,12 +11,19 @@ const {
 } = pigpioPkg;
 
 const doseFreq = 500;
-const rinseFreq = 750;
-const valveFreq = 25;
+const rinseFreq = 500;
 const waveBatchSize = 5000;
 const delayMs = 1000;
-const vol = 10;
+const buretteMaxVol = 8.14;
 
+const buretteDrivePinsNums = [17, 27, 22, 6, 5]; // Stepper driver GPIO pin numbers array: [ DIR, STEP, EN, SENSOR_AT_START, SENSOR_AT_END ]
+
+const valvePinNum = 26; // Valve GPIO pin number
+const valvePinObj = new Gpio(valvePinNum, { mode: Gpio.OUTPUT });
+const switchValveToInput = async () => valvePinObj.digitalWrite(0);
+const switchValveToOutput = async () => valvePinObj.digitalWrite(1);
+
+// eslint-disable-next-line no-promise-executor-return
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const createDriveGpiosSet = (
@@ -47,9 +54,6 @@ const createDriveGpiosSet = (
   };
 };
 
-const buretteDrivePinsNums = [13, 19, 12, 16, 7];
-const valveDrivePinsNums = [24, 18, 4, 8, 25];
-
 const moveByStepsCount = async (
   stepPinObj,
   enablePinObj,
@@ -61,14 +65,14 @@ const moveByStepsCount = async (
 ) => {
   if (sensorAtEndObj.digitalRead() === 1) {
     console.log(
-      `Верхний датчик бюретки (GPIO ${sensorAtEndObj.gpio}) уже активен, бюретка пустая.`,
+      `Сработал верхний датчик (GPIO ${sensorAtEndObj.gpio})`,
     );
     return;
   }
 
-  // console.log({ stepsCount });
-  const intervalMicrosecs = Math.floor(1_000_000 / (4 * freq));
-  enablePinObj.digitalWrite(1);
+  console.log({ stepsCount });
+  const intervalMicrosecs = Math.floor(1000000 / (4 * freq));
+  enablePinObj.digitalWrite(0);
   dirPinObj.digitalWrite(isClockwise ? 1 : 0);
 
   const fillPulsesArray = (v, i) =>
@@ -112,7 +116,7 @@ const moveByStepsCount = async (
       break;
     }
   }
-  enablePinObj.digitalWrite(0);
+  enablePinObj.digitalWrite(1);
 };
 
 const moveToSensor = async (
@@ -123,9 +127,9 @@ const moveToSensor = async (
   isClockwise,
   limitSensorObj,
 ) => {
-  const intervalMicrosecs = Math.floor(1_000_000 / (4 * freq));
-  enablePinObj.digitalWrite(1);
-  dirPinObj.digitalWrite(isClockwise ? 1 : 0);
+  const intervalMicrosecs = Math.floor(1000000 / (4 * freq));
+  enablePinObj.digitalWrite(0);
+  dirPinObj.digitalWrite(isClockwise ? 0 : 1);
 
   const fillPulsesArray = (v, i) =>
     i % 2 === 0
@@ -147,13 +151,14 @@ const moveToSensor = async (
       break;
     }
   }
-  enablePinObj.digitalWrite(0);
+  enablePinObj.digitalWrite(1);
 };
 
 const emptyBurette = async () => {
   const { stepPinObj, enablePinObj, dirPinObj, sensorAtEndObj } =
     createDriveGpiosSet(...buretteDrivePinsNums);
   console.log("\nОпустошаю бюретку...");
+  await switchValveToOutput();
   await moveToSensor(
     stepPinObj,
     enablePinObj,
@@ -168,6 +173,7 @@ const fillBurette = async () => {
   const { stepPinObj, enablePinObj, dirPinObj, sensorAtStartObj } =
     createDriveGpiosSet(...buretteDrivePinsNums);
   console.log("\nЗаполняю бюретку...");
+  await switchValveToInput();
   await moveToSensor(
     stepPinObj,
     enablePinObj,
@@ -178,63 +184,54 @@ const fillBurette = async () => {
   );
 };
 
-const doseVolume = async (volumeMl) => {
-  const stepsCount = Math.round(volumeMl / 0.0001475);
+const rinseBurette = async (repeatsCount = 1) => {
+  const rinseOnce = async () => {
+    await emptyBurette();
+    await delay(1000);
+    await fillBurette();
+    console.log("\nЦикл промывки завершён");
+  };
+  for (let i = 0; i < repeatsCount; i += 1) {
+    await rinseOnce();
+  }
+};
+
+const doseVolume = async (volumeMl = 1) => {
+  const cyclesCount = Math.floor(volumeMl / buretteMaxVol);
+  console.log({ cyclesCount });
+  const leftoverVol = Math.round(100 * (volumeMl % buretteMaxVol)) / 100;
+  console.log({ leftoverVol });
+  const leftoverStepsCount = Math.round(leftoverVol * 7704.16);
+  console.log({ leftoverStepsCount });
   const { stepPinObj, enablePinObj, dirPinObj, sensorAtEndObj } =
     createDriveGpiosSet(...buretteDrivePinsNums);
+
+  // console.log(`\nДозирую ${steps} шагов...`);
   console.log(`\nДозирую ${volumeMl} мл...`);
+  await rinseBurette(cyclesCount);
+
+  await switchValveToOutput();
+  console.log(`\nДозирую ещё ${leftoverVol} мл...`);
   await moveByStepsCount(
     stepPinObj,
     enablePinObj,
     dirPinObj,
-    stepsCount,
+    leftoverStepsCount,
     doseFreq,
-    true,
-    sensorAtEndObj,
-  );
-};
-
-const setValveToBottleBurette = async () => {
-  const { stepPinObj, enablePinObj, dirPinObj, sensorAtEndObj } =
-    createDriveGpiosSet(...valveDrivePinsNums);
-  console.log("\nПеревожу клапан в положение Бутыль -> Бюретка");
-  if (sensorAtEndObj.digitalRead() === 1) {
-    console.log(`Датчик (GPIO ${sensorAtEndObj.gpio}) уже активен.`);
-    return;
-  }
-  await moveToSensor(
-    stepPinObj,
-    enablePinObj,
-    dirPinObj,
-    valveFreq,
-    true,
-    sensorAtEndObj,
-  );
-};
-
-const setValveToBuretteVessel = async () => {
-  const { stepPinObj, enablePinObj, dirPinObj, sensorAtStartObj } =
-    createDriveGpiosSet(...valveDrivePinsNums);
-  console.log("\nПеревожу клапан в положение Бюретка -> Титровальный сосуд...");
-  if (sensorAtStartObj.digitalRead() === 1) {
-    console.log(`Датчик (GPIO ${sensorAtStartObj.gpio}) уже активен.`);
-    return;
-  }
-  await moveToSensor(
-    stepPinObj,
-    enablePinObj,
-    dirPinObj,
-    valveFreq,
     false,
-    sensorAtStartObj,
+    sensorAtEndObj,
   );
+  await delay(2000);
+  await switchValveToInput();
+  await fillBurette();
 };
 
-await setValveToBottleBurette();
-await delay(1000);
-await fillBurette();
-await delay(1000);
-await setValveToBuretteVessel();
-console.warn("Get ready!");
-await delay(2000);
-await doseVolume(vol);
+await doseVolume(20);
+
+// await fillBurette();
+
+// await emptyBurette();
+
+// await switchValveToInput();
+
+// await rinseBurette();

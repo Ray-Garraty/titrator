@@ -33,12 +33,14 @@ const measureMv = async () => {
     ).toFixed(1),
   );
 
-  /* console.log(
-    rawReading,
+  console.log(
+    rawMvReading,
     chalk.yellowBright("ADC,"),
     chalk.greenBright(mV),
     chalk.greenBright("mV"),
-  ); */
+    temperature,
+    chalk.yellowBright("deg. C,"),
+  );
 };
 
 setInterval(measureMv, pollPeriod);
